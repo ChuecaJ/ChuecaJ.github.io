@@ -103,6 +103,14 @@
     font-family:"Songti SC","Noto Serif SC","SimSun",serif;
     font-size:20px;line-height:1.75;color:var(--ink);transition:.1s;
   }
+  /* pinyin via ruby annotations */
+  .sent.with-py{line-height:2.3}
+  .sent ruby{ruby-position:over;margin:0 1px}
+  .sent rt{
+    font-size:.5em;color:var(--slate);font-weight:500;letter-spacing:0;
+    font-family:-apple-system,"Segoe UI",Roboto,sans-serif;user-select:none;
+    line-height:1.1;padding-bottom:1px;
+  }
   .sent:hover{background:var(--paper-2)}
   .sent.active{background:var(--hl);border-left-color:var(--seal)}
   .sent.speaking{background:var(--hl);border-left-color:var(--seal)}
@@ -110,7 +118,9 @@
     color:transparent;text-shadow:0 0 11px rgba(28,27,25,.55);
     user-select:none;
   }
+  body.dictation .sent rt{color:transparent;text-shadow:0 0 9px rgba(107,104,98,.6)}
   body.dictation .sent.revealed{color:var(--ink);text-shadow:none}
+  body.dictation .sent.revealed rt{color:var(--slate);text-shadow:none}
   /* hide the source text in the input box too */
   body.dictation #text{color:transparent;text-shadow:0 0 11px rgba(28,27,25,.5)}
   body.dictation #text:focus{color:var(--ink);text-shadow:none}
@@ -165,6 +175,7 @@
     <div class="ctl" style="flex:0 0 100%">
       <label>Modes</label>
       <div class="toggle-row">
+        <span class="chip" id="pyChip">拼 Pinyin</span>
         <span class="chip" id="loopChip">🔁 Loop current line</span>
         <span class="chip" id="autoChip">↩ Auto-advance</span>
         <span class="chip" id="dictChip">👁 Dictation (hide text)</span>
@@ -191,16 +202,19 @@
   </footer>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/pinyin-pro@3.28.1/dist/index.js"></script>
 <script>
 (function(){
   const synth = window.speechSynthesis;
   const supported = !!synth && typeof synth.getVoices === 'function'
                     && typeof window.SpeechSynthesisUtterance === 'function';
+  const PY = (typeof pinyinPro !== 'undefined' && pinyinPro.pinyin) ? pinyinPro.pinyin : null;
+  const isCJK = ch => /[\u3400-\u9fff]/.test(ch);
   const $ = id => document.getElementById(id);
   const reader = $('reader');
   let sentences = [], idx = -1, playing = false, voices = [], speakingNow = false;
 
-  const state = { loop:false, auto:true, dictation:false };
+  const state = { loop:false, auto:true, dictation:false, pinyin:true };
 
   function showUnsupported(){
     const n = $('notice');
@@ -249,6 +263,33 @@
     return parts.length ? parts : (t.trim() ? [t.trim()] : []);
   }
 
+  function fillSentence(b, s){
+    b.textContent='';
+    if(state.pinyin && PY){
+      let arr=null;
+      try{ arr = PY(s, {type:'array', toneType:'symbol'}); }catch(e){ arr=null; }
+      const chars=[...s];
+      if(arr && arr.length===chars.length){
+        b.classList.add('with-py');
+        chars.forEach((ch,i)=>{
+          if(isCJK(ch)){
+            const ruby=document.createElement('ruby');
+            ruby.appendChild(document.createTextNode(ch));
+            const rt=document.createElement('rt');
+            rt.textContent=arr[i];
+            ruby.appendChild(rt);
+            b.appendChild(ruby);
+          } else {
+            b.appendChild(document.createTextNode(ch));
+          }
+        });
+        return;
+      }
+    }
+    b.classList.remove('with-py');
+    b.textContent=s;
+  }
+
   function render(){
     reader.innerHTML='';
     if(!sentences.length){
@@ -258,7 +299,8 @@
     }
     sentences.forEach((s,i)=>{
       const b=document.createElement('button');
-      b.className='sent'; b.textContent=s; b.dataset.i=i;
+      b.className='sent'; b.dataset.i=i;
+      fillSentence(b, s);
       b.addEventListener('click',()=>{
         if(state.dictation && !b.classList.contains('revealed') && i!==idx){
           // first tap in dictation: play + reveal
@@ -345,11 +387,25 @@
     });
   }
   chip('loopChip','loop'); chip('autoChip','auto'); chip('dictChip','dictation');
-  // defaults: auto-advance on, dictation on
+
+  // pinyin toggle: re-render to add/remove the ruby annotations
+  $('pyChip').addEventListener('click',()=>{
+    if(!PY){
+      const n=$('notice');
+      n.textContent='No se pudo cargar la librería de pinyin (sin conexión). Vuelve a intentarlo con internet.';
+      n.classList.add('show');
+      return;
+    }
+    state.pinyin=!state.pinyin;
+    $('pyChip').classList.toggle('on',state.pinyin);
+    render();
+  });
+
+  // defaults: auto-advance on, pinyin on, dictation off (so the pinyin is visible on load)
   $('autoChip').classList.add('on');
-  state.dictation = true;
-  $('dictChip').classList.add('on');
-  document.body.classList.add('dictation');
+  state.pinyin = true;
+  $('pyChip').classList.add('on');
+  if(!PY) $('pyChip').style.opacity = .45;
 
   /* ---------- shareable practice link ---------- */
   function buildLink(){
